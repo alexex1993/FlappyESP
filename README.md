@@ -11,6 +11,10 @@ A Flappy-Bird-style game for the **Waveshare ESP32-C6-Touch-LCD-1.47**
 - READY → PLAY → GAME OVER loop, best score saved to NVS
 - Original pixel art drawn from integer primitives (the C6 has no FPU, and
   bundling the real Flappy Bird sprite sheet would be a copyright problem)
+  
+## Build & flash
+
+Development with [mcu-skills ](https://github.com/alexex1993/mcu-skills/tree/main/skills/esp32/esp32c6-touch-lcd147)
 
 ## Build & flash
 
