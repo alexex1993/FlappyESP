@@ -1,0 +1,17 @@
+# The ESP32-C6FH8 on this board carries 8 MB of in-package flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Console and log over the native USB Serial/JTAG (the Type-C port), not UART0.
+# Without this, printf/ESP_LOG go to GPIO16/17, which are only on the header:
+# the monitor stays silent while the firmware runs.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# app_main draws the whole scene from the stack-side tile canvas.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# 1 ms scheduler tick so the 60 fps frame loop can vTaskDelay() the ~10 ms
+# it is idle each frame instead of being quantised to the default 10 ms tick.
+CONFIG_FREERTOS_HZ=1000
+
+# Tighter build: this is a game, not a network node.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
