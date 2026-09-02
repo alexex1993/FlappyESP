@@ -12,7 +12,6 @@ A Flappy-Bird-style game for the **Waveshare ESP32-C6-Touch-LCD-1.47**
 ## Build & flash
 
 ```sh
-cd firmware
 pio run -t upload -t monitor
 ```
 
