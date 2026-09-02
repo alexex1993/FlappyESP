@@ -2,9 +2,14 @@
  * Flappy-style game for the Waveshare ESP32-C6-Touch-LCD-1.47.
  *
  * Portrait 172x320 JD9853 panel, AXS5106L capacitive touch. Tap anywhere on
- * the glass to flap. Three states: READY (bird bobbing, "TAP TO FLAP"),
- * PLAY (pipes scroll, score counts), DEAD (bird drops, game-over card,
- * tap to try again). Best score is kept in NVS.
+ * the glass -- or press the BOOT button -- to flap. Each input keeps its own
+ * edge detector, so a press on one is a flap even while the other is held
+ * down, and both are seeded from the real pin/panel state at start-up so a
+ * BOOT button still held from a flash does not fire a phantom tap. Three
+ * states: READY (bird bobbing, "TAP TO FLAP"), PLAY (pipes scroll, score
+ * counts), DEAD (bird drops, game-over card, tap to try again). Best score
+ * is kept in NVS. Touch is optional: if the panel fails to come up the game
+ * runs on the BOOT button alone.
  *
  * Rendering keeps NO framebuffer. The scene is described by a handful of
  * state variables; compose() paints it, and every frame we re-flush only the
@@ -736,6 +741,34 @@ static void backlight_set(uint8_t percent)
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
 }
 
+/* BOOT (GPIO9): 10k pull-up + 100n to ground on the board, so it is already
+ * debounced in hardware and reads low only while held. The internal pull-up
+ * goes on too -- costs nothing and keeps the line defined if the part is not
+ * stuffed. GPIO9 is a strapping pin, but only at reset; using it as a plain
+ * input afterwards is fine. */
+static void boot_btn_init(void)
+{
+    gpio_config_t btn = {
+        .pin_bit_mask = 1ULL << BSP_BOOT_BTN,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&btn));
+}
+
+static inline bool boot_btn_pressed(void)
+{
+    return gpio_get_level(BSP_BOOT_BTN) == 0;
+}
+
+/* Touch is optional -- a NULL handle means the panel never came up, and the
+ * BOOT button carries the game on its own. */
+static bool touch_pressed(axs5106l_handle_t tp)
+{
+    axs5106l_data_t t;
+    return tp != NULL && axs5106l_read(tp, &t) == ESP_OK && t.pressed;
+}
+
 static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
                                           esp_lcd_panel_io_event_data_t *edata,
                                           void *user_ctx)
@@ -832,6 +865,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Flappy on ESP32-C6-Touch-LCD-1.47");
 
     backlight_init();          /* 0 % duty first — see the template */
+    boot_btn_init();
     nvs_init();
     display_init();
 
@@ -854,22 +888,34 @@ void app_main(void)
     axs5106l_handle_t tp = NULL;
     esp_err_t err = axs5106l_new(&tp_cfg, &tp);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "touch init failed: %s", esp_err_to_name(err));
-        vTaskDelay(portMAX_DELAY);
+        /* Not fatal any more: BOOT is a complete input path by itself, so
+         * fall through and play without the glass instead of hanging. */
+        ESP_LOGE(TAG, "touch init failed: %s — BOOT button only",
+                 esp_err_to_name(err));
+        tp = NULL;
     }
-    ESP_LOGI(TAG, "ready — tap to flap");
+    ESP_LOGI(TAG, "ready — %s to flap",
+             tp ? "tap the screen or press BOOT" : "press BOOT");
 
-    bool was_pressed = false;
+    /* Seed both detectors from the current state. "Hold BOOT, tap RESET" is
+     * the board's standard recovery gesture, so the button is very often
+     * still down when we get here; starting from `false` would read that as
+     * a fresh press and kick the round off before the player did anything. */
+    bool touch_was = touch_pressed(tp);
+    bool btn_was = boot_btn_pressed();
     int64_t next_us = esp_timer_get_time();
 
     for (;;) {
-        /* ---- input: rising edge of a touch = one flap ---- */
-        axs5106l_data_t t;
-        bool pressed = (axs5106l_read(tp, &t) == ESP_OK) && t.pressed;
-        if (pressed && !was_pressed) {
+        /* ---- input: a rising edge on *either* input = one flap ----
+         * Levels must not be OR-ed: a held BOOT button would pin the shared
+         * signal high and swallow every tap on the glass (and vice versa). */
+        bool touched = touch_pressed(tp);
+        bool btn = boot_btn_pressed();
+        if ((touched && !touch_was) || (btn && !btn_was)) {
             on_tap();
         }
-        was_pressed = pressed;
+        touch_was = touched;
+        btn_was = btn;
 
         /* ---- simulate + render ---- */
         game_update();
