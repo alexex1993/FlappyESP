@@ -1,6 +1,6 @@
 # FlappyESP
 
-<img width="1900" height="2560" alt="image" src="https://github.com/user-attachments/assets/1e64df17-da40-4029-a426-7216be5d26fa" />
+<img width="800" height="1280" alt="image" src="https://github.com/user-attachments/assets/1e64df17-da40-4029-a426-7216be5d26fa" />
 
 
 A Flappy-Bird-style game for the **Waveshare ESP32-C6-Touch-LCD-1.47**
