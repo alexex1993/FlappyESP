@@ -109,6 +109,8 @@ static const char *TAG = "flappy";
 #define PIPE_LIP_OV  4                    /* lip overhang each side */
 #define PIPE_COUNT   3
 #define PIPE_SPACING 104                  /* px between consecutive pipes */
+#define PIPE_EASE_HOLD  12                /* first N pipes at double spacing   */
+#define PIPE_EASE_RAMP  10               /* pipes over which it tightens back */
 #define PIPE_STEP_MAX 2                   /* max px a pipe moves per frame */
 
 #define TILE_ROWS    32                   /* staging buffer height */
@@ -151,6 +153,7 @@ typedef struct {
     int  bird_vy_fp;
 
     pipe_t pipe[PIPE_COUNT];
+    int  pipes_made;        /* how many pipes have been placed this round */
     int  score;
     int  best;
 } game_t;
@@ -506,6 +509,22 @@ static void flush_dynamic(void)
 /*  Game logic                                                         */
 /* ------------------------------------------------------------------ */
 
+/* Horizontal distance from the previous pipe to pipe number `n` (0-based).
+ * The first PIPE_EASE_HOLD pipes sit at twice the normal spacing; over the
+ * next PIPE_EASE_RAMP pipes the extra distance is linearly removed, then it
+ * settles at the regular PIPE_SPACING. */
+static int pipe_spacing(int n)
+{
+    if (n < PIPE_EASE_HOLD) {
+        return PIPE_SPACING * 2;
+    }
+    int r = n - PIPE_EASE_HOLD;
+    if (r >= PIPE_EASE_RAMP) {
+        return PIPE_SPACING;
+    }
+    return PIPE_SPACING + PIPE_SPACING * (PIPE_EASE_RAMP - r) / PIPE_EASE_RAMP;
+}
+
 static int rand_gap(void)
 {
     int lo = PIPE_GAP / 2 + 20;
@@ -515,12 +534,17 @@ static int rand_gap(void)
 
 static void pipes_spawn(void)
 {
+    int x = W + 40;
     for (int i = 0; i < PIPE_COUNT; i++) {
+        if (i > 0) {
+            x += pipe_spacing(i);
+        }
         g.pipe[i].active = true;
         g.pipe[i].scored = false;
-        g.pipe[i].x_fp = (W + 40 + i * PIPE_SPACING) << FP;
+        g.pipe[i].x_fp = x << FP;
         g.pipe[i].gap = rand_gap();
     }
+    g.pipes_made = PIPE_COUNT;
 }
 
 static void game_reset(void)
@@ -650,9 +674,10 @@ static void game_update(void)
                     rightmost = g.pipe[k].x_fp >> FP;
                 }
             }
-            g.pipe[i].x_fp = (rightmost + PIPE_SPACING) << FP;
+            g.pipe[i].x_fp = (rightmost + pipe_spacing(g.pipes_made)) << FP;
             g.pipe[i].gap = rand_gap();
             g.pipe[i].scored = false;
+            g.pipes_made++;
         }
     }
 
