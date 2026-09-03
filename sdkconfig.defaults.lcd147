@@ -1,0 +1,6 @@
+# Waveshare ESP32-C6-LCD-1.47 (non-touch): the ESP32-C6FH4 carries 4 MB, not
+# the 8 MB the borrowed esp32-c6-devkitc-1 board definition claims. This line
+# and platformio.ini's board_upload.flash_size feed different tools and are
+# both needed -- with only one of them an oversized image links happily and
+# then fails to boot.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

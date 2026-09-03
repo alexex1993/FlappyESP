@@ -8,10 +8,25 @@
  *
  * NOTE: not one of these numbers matches the non-touch ESP32-C6-LCD-1.47.
  * The two boards share a name, a chip family and a panel size, and nothing
- * else.  Do not copy pins between them.
+ * else.  Do not copy pins between them -- that board has its own copy of this
+ * header in boards/lcd147/, and platformio.ini picks one per env.
  */
 
 #pragma once
+
+/* --- what the game asks the board about ------------------------------- */
+#define BSP_BOARD_NAME      "ESP32-C6-Touch-LCD-1.47"
+#define BSP_HAS_TOUCH       1             /* AXS5106L on I2C; BOOT still works */
+#define BSP_PANEL_JD9853    1
+
+/* The backlight sits behind an SS8050 NPN, so full duty is a brightness
+ * choice rather than a thermal one -- unlike the non-touch board, which
+ * drives the LEDs straight off a GPIO and must stay at or below 50 %. */
+#define BSP_BL_MAX_PCT      90
+
+/* On-screen prompts: this board's primary input is the glass. */
+#define BSP_HINT_START      "TAP TO FLAP"
+#define BSP_HINT_RETRY      "TAP TO RETRY"
 
 /* --- 1.47" IPS panel, JD9853, 4-wire SPI ------------------------------ */
 #define BSP_LCD_SPI_HOST    SPI2_HOST
@@ -25,6 +40,12 @@
 #define BSP_LCD_H_RES       172
 #define BSP_LCD_V_RES       320
 #define BSP_LCD_PIXEL_CLK   (40 * 1000 * 1000)
+
+/* The 172-pixel glass is centred in the controller's 240-column RAM:
+ * (240 - 172) / 2 = 34. Same numbers as JD9853_LCD_{X,Y}_GAP; spelled out
+ * here so the game can set the gap without knowing which panel it has. */
+#define BSP_LCD_X_GAP       34
+#define BSP_LCD_Y_GAP       0
 
 /* --- AXS5106L capacitive touch, on the shared I2C bus ----------------- */
 #define BSP_I2C_PORT        I2C_NUM_0

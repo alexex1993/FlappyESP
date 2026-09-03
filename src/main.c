@@ -1,14 +1,25 @@
 /*
- * Flappy-style game for the Waveshare ESP32-C6-Touch-LCD-1.47.
+ * Flappy-style game for the Waveshare 1.47" ESP32-C6 boards.
  *
- * Portrait 172x320 JD9853 panel, AXS5106L capacitive touch. Tap anywhere on
- * the glass -- or press the BOOT button -- to flap. Each input keeps its own
- * edge detector, so a press on one is a flap even while the other is held
- * down, and both are seeded from the real pin/panel state at start-up so a
- * BOOT button still held from a flash does not fire a phantom tap. Three
- * states: READY (bird bobbing, "TAP TO FLAP"), PLAY (pipes scroll, score
- * counts), DEAD (bird drops, game-over card, tap to try again). Best score
- * is kept in NVS. Touch is optional: if the panel fails to come up the game
+ * One source, two boards, chosen by the env in platformio.ini:
+ *
+ *   ESP32-C6-Touch-LCD-1.47   JD9853 panel + AXS5106L capacitive touch.
+ *                             Tap the glass or press BOOT to flap.
+ *   ESP32-C6-LCD-1.47         ST7789 panel, no touch controller at all.
+ *                             BOOT is the whole input surface.
+ *
+ * Everything board-shaped is reached through board_pins.h, of which there is
+ * one copy per board under boards/<name>/; it carries the pin map plus the
+ * BSP_HAS_TOUCH / BSP_PANEL_* / BSP_HINT_* macros switched on below. Nothing
+ * else in this file names a board.
+ *
+ * Both boards are portrait 172x320. Each input keeps its own edge detector,
+ * so a press on one is a flap even while the other is held down, and both are
+ * seeded from the real pin/panel state at start-up so a BOOT button still
+ * held from a flash does not fire a phantom tap. Three states: READY (bird
+ * bobbing, BSP_HINT_START), PLAY (pipes scroll, score counts), DEAD (bird
+ * drops, game-over card, press again to retry). Best score is kept in NVS.
+ * On the touch board the glass is optional: if it fails to come up the game
  * runs on the BOOT button alone.
  *
  * Rendering keeps NO framebuffer. The scene is described by a handful of
@@ -30,8 +41,9 @@
  * so the art is original pixel work rather than lifted sprite sheets.
  *
  * ⚠︎ Built clean on ESP-IDF 6.1.0, but NOT verified on hardware in this
- * session. The display and touch bring-up is the skill template's, which is
- * hardware-proven; the game logic and dirty-band flushing on top are not.
+ * session. Both display paths and the touch bring-up come from the skill
+ * templates, which are hardware-proven; the game logic and the dirty-band
+ * flushing on top are not.
  */
 
 #include <stdio.h>
@@ -39,7 +51,6 @@
 #include <string.h>
 
 #include "driver/gpio.h"
-#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -54,10 +65,22 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
-#include "axs5106l.h"
 #include "board_pins.h"
-#include "esp_lcd_jd9853.h"
 #include "font5x7.h"
+
+/* Board-specific headers. board_pins.h decides which of these exist. */
+#if BSP_HAS_TOUCH
+#include "driver/i2c_master.h"
+#include "axs5106l.h"
+#endif
+#if defined(BSP_PANEL_JD9853)
+#include "esp_lcd_jd9853.h"
+#elif defined(BSP_PANEL_ST7789)
+#include "esp_lcd_panel_st7789.h"
+#include "esp_lcd_panel_vendor.h"
+#else
+#error "board_pins.h must define BSP_PANEL_JD9853 or BSP_PANEL_ST7789"
+#endif
 
 static const char *TAG = "flappy";
 
@@ -420,7 +443,7 @@ static void compose(canvas_t *c)
         draw_text_center_shd(c, SCORE_Y, s, 3, C_TEXT);
     } else if (g.state == ST_READY) {
         draw_text_center_shd(c, 66, "FLAPPY", 3, C_GOLD);
-        draw_text_center_shd(c, 104, "TAP TO FLAP", 1, C_TEXT);
+        draw_text_center_shd(c, 104, BSP_HINT_START, 1, C_TEXT);
         if (g.best > 0) {
             char s[16];
             snprintf(s, sizeof(s), "BEST %d", g.best);
@@ -441,7 +464,7 @@ static void compose(canvas_t *c)
         draw_text(c, cx0 + 14, cy0 + 52, s, 1, C_TEXT_SHD);
 
         if ((g.tick - g.death_tick) > 40 && ((g.tick >> 3) & 1)) {
-            draw_text_center_shd(c, cy0 + 70, "TAP TO RETRY", 1, C_TEXT_SHD);
+            draw_text_center_shd(c, cy0 + 70, BSP_HINT_RETRY, 1, C_TEXT_SHD);
         }
     }
 }
@@ -735,17 +758,22 @@ static void backlight_init(void)
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
 }
 
+/* Clamped to the board's ceiling. On the non-touch board that ceiling is a
+ * hardware-damage rule, not a taste one -- see BSP_BL_MAX_PCT. */
 static void backlight_set(uint8_t percent)
 {
+    if (percent > BSP_BL_MAX_PCT) {
+        percent = BSP_BL_MAX_PCT;
+    }
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, percent * 255 / 100));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
 }
 
-/* BOOT (GPIO9): 10k pull-up + 100n to ground on the board, so it is already
- * debounced in hardware and reads low only while held. The internal pull-up
- * goes on too -- costs nothing and keeps the line defined if the part is not
- * stuffed. GPIO9 is a strapping pin, but only at reset; using it as a plain
- * input afterwards is fine. */
+/* BOOT (GPIO9 on both boards): pulled up and RC-debounced on the board, so it
+ * reads low only while held. The internal pull-up goes on too -- costs
+ * nothing and keeps the line defined if the part is not stuffed. GPIO9 is a
+ * strapping pin, but only at reset; using it as a plain input afterwards is
+ * fine. */
 static void boot_btn_init(void)
 {
     gpio_config_t btn = {
@@ -761,13 +789,61 @@ static inline bool boot_btn_pressed(void)
     return gpio_get_level(BSP_BOOT_BTN) == 0;
 }
 
-/* Touch is optional -- a NULL handle means the panel never came up, and the
- * BOOT button carries the game on its own. */
-static bool touch_pressed(axs5106l_handle_t tp)
+/* Touch, where the board has any. Kept behind these two calls so app_main's
+ * input loop reads the same on a board with no glass at all: on the non-touch
+ * ESP32-C6-LCD-1.47 they compile away to nothing and BOOT carries the game. */
+#if BSP_HAS_TOUCH
+static axs5106l_handle_t s_tp;   /* NULL = the controller never came up */
+
+static i2c_master_bus_handle_t i2c_init(void)
+{
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = BSP_I2C_PORT,
+        .sda_io_num = BSP_I2C_SDA,
+        .scl_io_num = BSP_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t bus = NULL;
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
+    return bus;
+}
+
+static void touch_init(void)
+{
+    axs5106l_config_t tp_cfg = {
+        .i2c_bus = i2c_init(),
+        .rst_gpio = BSP_TP_RST,
+        .int_gpio = BSP_TP_INT,
+        .width = W,
+        .height = H,
+    };
+    esp_err_t err = axs5106l_new(&tp_cfg, &s_tp);
+    if (err != ESP_OK) {
+        /* Not fatal: BOOT is a complete input path by itself, so fall through
+         * and play without the glass instead of hanging. */
+        ESP_LOGE(TAG, "touch init failed: %s — BOOT button only",
+                 esp_err_to_name(err));
+        s_tp = NULL;
+    }
+    ESP_LOGI(TAG, "ready — %s to flap",
+             s_tp ? "tap the screen or press BOOT" : "press BOOT");
+}
+
+static bool touch_pressed(void)
 {
     axs5106l_data_t t;
-    return tp != NULL && axs5106l_read(tp, &t) == ESP_OK && t.pressed;
+    return s_tp != NULL && axs5106l_read(s_tp, &t) == ESP_OK && t.pressed;
 }
+#else
+static void touch_init(void)
+{
+    ESP_LOGI(TAG, "ready — press BOOT to flap");
+}
+
+static inline bool touch_pressed(void) { return false; }
+#endif
 
 static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
                                           esp_lcd_panel_io_event_data_t *edata,
@@ -815,35 +891,37 @@ static void display_init(void)
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BSP_LCD_SPI_HOST,
                                              &io_cfg, &io));
 
+    /* COLOR() already packs big-endian, which is what both controllers want;
+     * LCD_RGB_DATA_ENDIAN_BIG is the zero value, spelled out here so nobody
+     * "fixes" it later. MADCTL comes out 0x00 either way, so the two panels
+     * agree on orientation and the game's geometry is board-independent. */
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = BSP_LCD_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
         .bits_per_pixel = 16,
     };
+#if defined(BSP_PANEL_JD9853)
     ESP_ERROR_CHECK(esp_lcd_new_panel_jd9853(io, &panel_cfg, &s_panel));
+#else
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io, &panel_cfg, &s_panel));
+#endif
+
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, JD9853_LCD_X_GAP, JD9853_LCD_Y_GAP));
+#if defined(BSP_PANEL_ST7789)
+    /* The JD9853's vendored init sequence ends in INVON; the stock ST7789
+     * driver has no idea this glass is an inverted IPS part, so say so here.
+     * Without it every colour is a photographic negative, which reads as a
+     * broken RGB565 packing and sends you off debugging the wrong thing. */
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
+#endif
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, BSP_LCD_X_GAP, BSP_LCD_Y_GAP));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
     s_tile = heap_caps_malloc(W * TILE_ROWS * sizeof(uint16_t), MALLOC_CAP_DMA);
     ESP_ERROR_CHECK(s_tile ? ESP_OK : ESP_ERR_NO_MEM);
-}
-
-static i2c_master_bus_handle_t i2c_init(void)
-{
-    i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = BSP_I2C_PORT,
-        .sda_io_num = BSP_I2C_SDA,
-        .scl_io_num = BSP_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_master_bus_handle_t bus = NULL;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
-    return bus;
 }
 
 static void nvs_init(void)
@@ -862,7 +940,7 @@ static void nvs_init(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Flappy on ESP32-C6-Touch-LCD-1.47");
+    ESP_LOGI(TAG, "Flappy on " BSP_BOARD_NAME);
 
     backlight_init();          /* 0 % duty first — see the template */
     boot_btn_init();
@@ -874,34 +952,15 @@ void app_main(void)
     game_reset();
 
     flush_all();
-    backlight_set(90);
+    backlight_set(BSP_BL_MAX_PCT);
 
-    i2c_master_bus_handle_t i2c_bus = i2c_init();
-
-    axs5106l_config_t tp_cfg = {
-        .i2c_bus = i2c_bus,
-        .rst_gpio = BSP_TP_RST,
-        .int_gpio = BSP_TP_INT,
-        .width = W,
-        .height = H,
-    };
-    axs5106l_handle_t tp = NULL;
-    esp_err_t err = axs5106l_new(&tp_cfg, &tp);
-    if (err != ESP_OK) {
-        /* Not fatal any more: BOOT is a complete input path by itself, so
-         * fall through and play without the glass instead of hanging. */
-        ESP_LOGE(TAG, "touch init failed: %s — BOOT button only",
-                 esp_err_to_name(err));
-        tp = NULL;
-    }
-    ESP_LOGI(TAG, "ready — %s to flap",
-             tp ? "tap the screen or press BOOT" : "press BOOT");
+    touch_init();              /* no-op on a board without a touch controller */
 
     /* Seed both detectors from the current state. "Hold BOOT, tap RESET" is
      * the board's standard recovery gesture, so the button is very often
      * still down when we get here; starting from `false` would read that as
      * a fresh press and kick the round off before the player did anything. */
-    bool touch_was = touch_pressed(tp);
+    bool touch_was = touch_pressed();
     bool btn_was = boot_btn_pressed();
     int64_t next_us = esp_timer_get_time();
 
@@ -909,7 +968,7 @@ void app_main(void)
         /* ---- input: a rising edge on *either* input = one flap ----
          * Levels must not be OR-ed: a held BOOT button would pin the shared
          * signal high and swallow every tap on the glass (and vice versa). */
-        bool touched = touch_pressed(tp);
+        bool touched = touch_pressed();
         bool btn = boot_btn_pressed();
         if ((touched && !touch_was) || (btn && !btn_was)) {
             on_tap();

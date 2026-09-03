@@ -1,5 +1,6 @@
-# The ESP32-C6FH8 on this board carries 8 MB of in-package flash.
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# Settings shared by both boards. The flash size differs between them, so it
+# lives in sdkconfig.defaults.<board>, which CMakeLists.txt appends to this
+# file based on FLAPPY_BOARD.
 
 # Console and log over the native USB Serial/JTAG (the Type-C port), not UART0.
 # Without this, printf/ESP_LOG go to GPIO16/17, which are only on the header:

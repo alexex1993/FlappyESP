@@ -1,0 +1,4 @@
+# Waveshare ESP32-C6-Touch-LCD-1.47: the ESP32-C6FH8 carries 8 MB of
+# in-package flash, which is also what the borrowed esp32-c6-devkitc-1 board
+# definition assumes, so nothing else has to be corrected here.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
